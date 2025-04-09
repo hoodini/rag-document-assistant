@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase/client";
-import { getLLM, getEmbeddings, createQAChain } from "@/lib/langchain/chain";
-import { MemoryVectorStore } from "langchain/vectorstores/memory";
-import { RecursiveCharacterTextSplitter } from "langchain/text_splitter";
+import { getLLM, getEmbeddings, createQAChain, formatDocumentsAsString } from "@/lib/langchain/chain";
+import { Document } from "@langchain/core/documents";
 
 // Helper function to get documents from Supabase
 async function getDocuments() {
@@ -41,24 +40,25 @@ async function createRetriever() {
       Questions about these documents can be answered using RAG techniques.
     `;
     
-    // Split text into chunks
-    const splitter = new RecursiveCharacterTextSplitter({
-      chunkSize: 1000,
-      chunkOverlap: 200,
-    });
+    // Create a mock retriever that returns documents
+    const mockRetriever = {
+      invoke: async () => {
+        return [
+          new Document({ 
+            pageContent: sampleText,
+            metadata: { source: "placeholder" }
+          })
+        ];
+      },
+      pipe: (fn: any) => ({
+        invoke: async () => {
+          const docs = await mockRetriever.invoke();
+          return fn(docs);
+        }
+      })
+    };
     
-    const chunks = await splitter.splitText(sampleText);
-    
-    // Create vector store with embeddings
-    const embeddings = getEmbeddings();
-    const vectorStore = await MemoryVectorStore.fromTexts(
-      chunks,
-      { id: "1", source: "placeholder" },
-      embeddings
-    );
-    
-    // Create and return retriever
-    return vectorStore.asRetriever();
+    return mockRetriever;
   } catch (error) {
     console.error("Error creating retriever:", error);
     throw error;

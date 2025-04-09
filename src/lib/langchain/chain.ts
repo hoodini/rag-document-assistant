@@ -1,9 +1,9 @@
 import { ChatCohere } from "@langchain/cohere";
 import { CohereEmbeddings } from "@langchain/cohere";
-import { PromptTemplate } from "langchain/prompts";
-import { StringOutputParser } from "langchain/schema/output_parser";
-import { formatDocumentsAsString } from "langchain/util/document";
-import { RunnableSequence } from "langchain/schema/runnable";
+import { PromptTemplate } from "@langchain/core/prompts";
+import { StringOutputParser } from "@langchain/core/output_parsers";
+import { Document } from "@langchain/core/documents";
+import { RunnableSequence } from "@langchain/core/runnables";
 
 // Initialize Cohere language model
 const getCohereAPI = () => {
@@ -27,6 +27,11 @@ export const getLLM = () => {
     model: "command",
     temperature: 0.1,
   });
+};
+
+// Helper function to format documents as a string
+export const formatDocumentsAsString = (documents: Document[]): string => {
+  return documents.map((doc) => doc.pageContent).join("\n\n");
 };
 
 // Standard Question-Answering prompt
