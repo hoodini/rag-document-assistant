@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase/client";
+import { deleteDocumentEmbeddings } from "@/lib/document-utils";
 
 // DELETE /api/documents/[id] - Delete a document
 export async function DELETE(
@@ -45,8 +46,12 @@ export async function DELETE(
       );
     }
 
-    // Delete document's embeddings (if implemented)
-    // This would be where you'd call a function to delete the document's embeddings
+    // Delete document's embeddings
+    const embeddingsDeleted = await deleteDocumentEmbeddings(id);
+    
+    if (!embeddingsDeleted) {
+      console.warn(`Warning: Document file was deleted but embeddings deletion failed for document ${id}`);
+    }
 
     return NextResponse.json({ success: true });
   } catch (error) {

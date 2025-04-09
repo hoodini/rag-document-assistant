@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase/client";
+import { processDocumentForRAG } from "@/lib/document-utils";
 import { v4 as uuidv4 } from "uuid";
 
 // POST /api/documents/upload - Upload a document
@@ -17,6 +18,7 @@ export async function POST(request: NextRequest) {
 
     // Generate a unique file name to prevent overwriting
     const fileName = `${uuidv4()}-${file.name}`;
+    const docId = uuidv4(); // Generate ID for document tracking
 
     // Convert file to buffer for upload
     const buffer = await file.arrayBuffer();
@@ -43,9 +45,9 @@ export async function POST(request: NextRequest) {
       .from("documents")
       .getPublicUrl(fileName);
 
-    // Prepare response data
+    // Prepare document data
     const document = {
-      id: uuidv4(), // Generate a client-side ID
+      id: docId,
       name: file.name,
       type: file.type,
       size: file.size,
@@ -55,7 +57,18 @@ export async function POST(request: NextRequest) {
     };
 
     // Process document for embeddings
-    // This would be where you'd call a function to process the document with LangChain/Cohere
+    // We pass the buffer and document info to our processing utility
+    const processSuccess = await processDocumentForRAG(buffer, {
+      id: document.id,
+      name: document.name,
+      type: document.type,
+      path: document.path,
+    });
+
+    // Even if processing fails, we return the document info since the file was uploaded
+    if (!processSuccess) {
+      console.warn("Warning: Document was uploaded but processing for embeddings failed");
+    }
     
     return NextResponse.json(document);
   } catch (error) {
