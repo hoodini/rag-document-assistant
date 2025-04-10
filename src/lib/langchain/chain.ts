@@ -1,69 +1,113 @@
-import { ChatCohere } from "@langchain/cohere";
-import { CohereEmbeddings } from "@langchain/cohere";
 import { PromptTemplate } from "@langchain/core/prompts";
 import { StringOutputParser } from "@langchain/core/output_parsers";
-import { Document } from "@langchain/core/documents";
 import { RunnableSequence } from "@langchain/core/runnables";
+import { formatDocumentsAsString } from "langchain/util/document";
+import { CohereClient } from "cohere-ai";
+import { CohereEmbeddings } from "@langchain/cohere";
 
-// Initialize Cohere language model
-const getCohereAPI = () => {
-  const apiKey = process.env.COHERE_API_KEY;
-  if (!apiKey) {
-    throw new Error("COHERE_API_KEY is not set");
-  }
-  return apiKey;
-};
+// Cohere API client
+export const cohereClient = new CohereClient({
+  token: process.env.COHERE_API_KEY!
+});
 
-export const getEmbeddings = () => {
+/**
+ * Get embeddings model
+ */
+export function getEmbeddings() {
   return new CohereEmbeddings({
-    apiKey: getCohereAPI(),
-    model: "embed-english-v3.0",
+    apiKey: process.env.COHERE_API_KEY,
+    model: "embed-english-v3.0", // Explicitly specify model version
   });
-};
+}
 
-export const getLLM = () => {
-  return new ChatCohere({
-    apiKey: getCohereAPI(),
-    model: "command",
-    temperature: 0.1,
-  });
-};
+/**
+ * Get LLM instance
+ */
+export function getLLM() {
+  // Return a custom LLM using CohereClient
+  const llm = {
+    invoke: async (prompt: string): Promise<string> => {
+      try {
+        const response = await cohereClient.generate({
+          model: "command", // Explicitly specify model
+          prompt: prompt,
+          maxTokens: 1000,
+          temperature: 0.7,
+          stopSequences: [],
+          returnLikelihoods: "NONE",
+        });
 
-// Helper function to format documents as a string
-export const formatDocumentsAsString = (documents: Document[]): string => {
-  return documents.map((doc) => doc.pageContent).join("\n\n");
-};
-
-// Standard Question-Answering prompt
-const QA_PROMPT_TEMPLATE = `
-You are a helpful assistant that answers questions based on the provided documents. 
-Documents:
-{context}
-
-Question: {question}
-
-Answer the question based only on the provided documents. If the documents don't contain the answer, say "I don't have enough information to answer this question".
-Your answer should be thorough, accurate, and helpful.
-`;
-
-// Create the QA chain
-export const createQAChain = (retriever: any) => {
-  const qaPrompt = PromptTemplate.fromTemplate(QA_PROMPT_TEMPLATE);
-  const llm = getLLM();
-  const outputParser = new StringOutputParser();
-
-  const qaChain = RunnableSequence.from([
-    {
-      context: retriever.pipe(formatDocumentsAsString),
-      question: (input: { question: string }) => input.question,
+        // Return the response text
+        return response.generations[0]?.text || "No response generated";
+      } catch (error: any) {
+        console.error("Error calling Cohere API:", error);
+        return `Error: ${error.message || "Unknown error calling Cohere API"}`;
+      }
     },
-    qaPrompt,
-    llm,
-    outputParser,
+    pipe: (fn: any) => {
+      return {
+        invoke: async (input: string) => {
+          const output = await llm.invoke(input);
+          return fn(output);
+        }
+      };
+    }
+  };
+
+  return llm;
+}
+
+/**
+ * Format a RAG prompt
+ */
+const formatRAGPrompt = (context: string, question: string) => {
+  return `You are a helpful AI assistant that answers questions based on the provided context.
+  
+Context information:
+${context}
+
+User question: ${question}
+
+Instructions:
+1. Answer the user question based ONLY on the context provided
+2. If the context doesn't contain the answer, say "I don't have enough information to answer that question."
+3. Keep your answer concise, informative, and to the point
+4. Include relevant facts from the context to support your answer
+
+Your answer:`;
+};
+
+/**
+ * Create a QA chain for retrieval augmented generation (RAG)
+ */
+export function createQAChain(retriever: any) {
+  const ragPromptTemplate = (input: { question: string; context: string }) => {
+    return formatRAGPrompt(input.context, input.question);
+  };
+
+  // Create a chain that retrieves docs, formats them, and sends to LLM
+  const chain = RunnableSequence.from([
+    {
+      // Accepts just a question as input
+      question: (input: { question: string }) => input.question,
+      // Fetch relevant documents using retriever
+      context: async (input: { question: string }) => {
+        // Get documents using the retriever
+        const docs = await retriever.invoke();
+        // Format documents into a single string
+        return formatDocumentsAsString(docs);
+      },
+    },
+    // Format with the RAG prompt template
+    ragPromptTemplate,
+    // Send to LLM
+    getLLM(),
+    // Output parser
+    new StringOutputParser(),
   ]);
 
-  return qaChain;
-};
+  return chain;
+}
 
 // Insight prompt template
 const INSIGHT_PROMPT_TEMPLATE = `

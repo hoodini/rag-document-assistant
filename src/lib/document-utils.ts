@@ -178,33 +178,84 @@ export async function processDocumentForRAG(
  * Retrieve documents based on a query
  * This is a simplified implementation
  */
-export async function retrieveDocuments(query: string): Promise<Document[]> {
+export async function retrieveDocuments(query: string, includeDebug = false): Promise<{
+  documents: Document[];
+  debugData?: {
+    similarityScores: {
+      documentId: string,
+      chunkId: string,
+      score: number,
+      content: string
+    }[];
+  }
+}> {
   try {
     const embeddings = getEmbeddings();
+    
+    // Generate embedding for query
+    console.log("Generating embedding for query:", query);
+    const queryEmbedding = await embeddings.embedQuery(query);
     
     // In a real implementation:
     // 1. Generate embedding for query
     // 2. Perform vector similarity search in pgvector
     
     // For this example, we'll just retrieve all document chunks
+    // and simulate similarity ranking
     const { data, error } = await supabase
       .from('document_chunks')
       .select('*')
-      .limit(5);
+      .limit(10);
     
     if (error) {
       console.error('Error retrieving documents:', error);
-      return [];
+      return { documents: [] };
     }
     
-    // Convert Supabase data to Documents
-    return data.map(item => new Document({
-      pageContent: item.content,
-      metadata: item.metadata
+    // Simulate similarity scores (in a real app, this would be from vector search)
+    // This is just random ranking for demonstration purposes
+    const simulatedItems = data.map(item => ({
+      ...item,
+      // Random similarity score between 0.5 and 0.95
+      similarity: Math.round((0.5 + Math.random() * 0.45) * 100) / 100
     }));
+    
+    // Sort by simulated similarity (highest first)
+    simulatedItems.sort((a, b) => b.similarity - a.similarity);
+    
+    // Take top 5 chunks
+    const topItems = simulatedItems.slice(0, 5);
+    
+    // Convert Supabase data to Documents
+    const documents = topItems.map(item => new Document({
+      pageContent: item.content,
+      metadata: {
+        ...(typeof item.metadata === 'object' ? item.metadata : {}),
+        docId: item.document_id,
+        docName: item.metadata?.docName || 'Unknown Document',
+        chunkId: item.id,
+        similarity: item.similarity
+      }
+    }));
+    
+    // Include debug information if requested
+    if (includeDebug) {
+      const debugData = {
+        similarityScores: topItems.map(item => ({
+          documentId: item.document_id,
+          chunkId: item.id,
+          score: item.similarity,
+          content: item.content.substring(0, 100) + '...'
+        }))
+      };
+      
+      return { documents, debugData };
+    }
+    
+    return { documents };
   } catch (error) {
     console.error('Error retrieving documents:', error);
-    return [];
+    return { documents: [] };
   }
 }
 

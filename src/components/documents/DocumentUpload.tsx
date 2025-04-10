@@ -5,12 +5,15 @@ import { useAppStore } from "@/store";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Upload, File, X } from "lucide-react";
+import { Upload, File, X, AlertCircle } from "lucide-react";
 import { v4 as uuidv4 } from "uuid";
+import { toast } from "sonner";
+import SetupInstructions from "@/components/setup/SetupInstructions";
 
 export default function DocumentUpload() {
   const [dragActive, setDragActive] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
+  const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const { isUploading, setIsUploading } = useAppStore();
 
@@ -32,6 +35,7 @@ export default function DocumentUpload() {
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       const newFiles = Array.from(e.dataTransfer.files);
       setFiles((prev) => [...prev, ...newFiles]);
+      setError(null);
     }
   };
 
@@ -40,6 +44,7 @@ export default function DocumentUpload() {
       const newFiles = Array.from(e.target.files);
       setFiles((prev) => [...prev, ...newFiles]);
       e.target.value = ""; // Reset input value
+      setError(null);
     }
   };
 
@@ -47,6 +52,7 @@ export default function DocumentUpload() {
     if (files.length === 0) return;
 
     setIsUploading(true);
+    setError(null);
     
     try {
       const uploadPromises = files.map(async (file) => {
@@ -59,16 +65,33 @@ export default function DocumentUpload() {
         });
         
         if (!response.ok) {
-          throw new Error(`Failed to upload ${file.name}`);
+          const errorData = await response.json();
+          throw new Error(errorData.error || `Failed to upload ${file.name}`, {
+            cause: errorData
+          });
         }
         
         return response.json();
       });
       
       await Promise.all(uploadPromises);
+      toast.success("Files uploaded successfully");
       setFiles([]);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Upload error:", error);
+      
+      // Check for storage bucket error
+      const isBucketError = 
+        error.cause?.error === "Bucket not found" || 
+        error.message?.includes("Bucket not found") ||
+        error.cause?.message?.includes("Bucket not found");
+      
+      if (isBucketError) {
+        setError("Storage bucket not found. You need to run the setup process first.");
+      } else {
+        setError(error.message || "Failed to upload files");
+        toast.error("Upload failed");
+      }
     } finally {
       setIsUploading(false);
     }
@@ -87,6 +110,20 @@ export default function DocumentUpload() {
         </CardDescription>
       </CardHeader>
       <CardContent>
+        {error && (
+          <div className="mb-4 p-3 border rounded-md bg-destructive/10 text-destructive flex items-start space-x-2">
+            <AlertCircle className="h-5 w-5 flex-shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <p className="text-sm font-medium">{error}</p>
+              {error.includes("setup") && (
+                <div className="pt-2">
+                  <SetupInstructions />
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+        
         <div
           className={`border-2 border-dashed rounded-lg p-6 flex flex-col items-center justify-center ${
             dragActive ? "border-primary bg-primary/10" : "border-muted-foreground/20"

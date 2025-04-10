@@ -6,8 +6,37 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { ChatMessage, Chat } from "@/types";
-import { Send, Plus, Loader2 } from "lucide-react";
+import { Send, Plus, Loader2, Bug } from "lucide-react";
 import { v4 as uuidv4 } from "uuid";
+import ErrorFallback from "./ErrorFallback";
+import DebugPanel from "./DebugPanel";
+
+// Define types for debug information
+interface DebugInfo {
+  hasDocuments: boolean;
+  retrievedDocuments: Array<{
+    id: string;
+    name: string;
+    chunkId: string;
+    content: string;
+  }> | null;
+  similarityScores: Array<{
+    documentId: string;
+    chunkId: string;
+    score: number;
+    content: string;
+  }> | null;
+  timing: {
+    total: number;
+    retrieval: number;
+    llmProcessing: number;
+  };
+  processSteps: Array<{
+    step: string;
+    message: string;
+    timestamp: string;
+  }>;
+}
 
 export default function ChatUI() {
   const {
@@ -18,6 +47,9 @@ export default function ChatUI() {
     setIsLoadingChat,
   } = useAppStore();
   const [input, setInput] = useState("");
+  const [error, setError] = useState<{ message: string; isSetupError: boolean } | null>(null);
+  const [debugInfo, setDebugInfo] = useState<DebugInfo | null>(null);
+  const [showDebugPanel, setShowDebugPanel] = useState(false);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -71,11 +103,27 @@ export default function ChatUI() {
     };
     addChat(newChat);
     setInput("");
+    setError(null);
+    setDebugInfo(null);
+  };
+
+  // Retry after error
+  const handleRetry = () => {
+    setError(null);
+  };
+
+  // Toggle debug panel
+  const toggleDebugPanel = () => {
+    setShowDebugPanel(!showDebugPanel);
   };
 
   // Send a message
   const handleSendMessage = async () => {
     if (!input.trim()) return;
+    
+    // Clear any previous errors
+    setError(null);
+    setDebugInfo(null);
     
     // Create a new chat if none exists
     const isNewChat = ensureActiveChat();
@@ -106,10 +154,25 @@ export default function ChatUI() {
       });
       
       if (!response.ok) {
-        throw new Error("Failed to send message");
+        const errorData = await response.json();
+        // Check if this is likely a setup error
+        const isSetupError = 
+          errorData.details?.includes("document_chunks") || 
+          response.status === 500;
+        
+        throw new Error(errorData.error || "Failed to send message", { 
+          cause: { isSetupError, details: errorData.details } 
+        });
       }
       
       const data = await response.json();
+      
+      // Store debug info if available
+      if (data.debug) {
+        setDebugInfo(data.debug);
+        // Automatically show debug panel when data is available
+        setShowDebugPanel(true);
+      }
       
       // Add AI response
       const aiMessage: ChatMessage = {
@@ -125,10 +188,16 @@ export default function ChatUI() {
       if (isNewChat) {
         // TODO: Implement updating chat title based on first message
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error sending message:", error);
       
-      // Add error message
+      // Set error state for UI
+      setError({
+        message: error.message || "Sorry, there was an error processing your request.",
+        isSetupError: error.cause?.isSetupError || false
+      });
+      
+      // Add error message to chat
       const errorMessage: ChatMessage = {
         id: uuidv4(),
         role: "assistant",
@@ -158,6 +227,19 @@ export default function ChatUI() {
     }
   };
 
+  // Show error UI if needed
+  if (error) {
+    return (
+      <div className="h-full flex items-center justify-center p-4">
+        <ErrorFallback 
+          message={error.message}
+          retry={handleRetry}
+          showSetupButton={error.isSetupError}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-full">
       {/* Chat header */}
@@ -165,10 +247,23 @@ export default function ChatUI() {
         <h2 className="text-xl font-semibold">
           {currentChat ? currentChat.title : "New Chat"}
         </h2>
-        <Button variant="outline" size="sm" onClick={handleNewChat}>
-          <Plus className="h-4 w-4 mr-1" />
-          New Chat
-        </Button>
+        <div className="flex items-center gap-2">
+          {debugInfo && (
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={toggleDebugPanel}
+              className="flex items-center gap-1"
+            >
+              <Bug className="h-4 w-4" />
+              {showDebugPanel ? "Hide" : "Show"} Debug
+            </Button>
+          )}
+          <Button variant="outline" size="sm" onClick={handleNewChat}>
+            <Plus className="h-4 w-4 mr-1" />
+            New Chat
+          </Button>
+        </div>
       </div>
       
       {/* Messages area */}
@@ -230,6 +325,15 @@ export default function ChatUI() {
         </ScrollArea>
       </div>
       
+      {/* Debug panel */}
+      {debugInfo && (
+        <DebugPanel 
+          debugInfo={debugInfo} 
+          active={showDebugPanel} 
+          onToggle={toggleDebugPanel}
+        />
+      )}
+      
       {/* Input area */}
       <div className="p-4 border-t">
         <div className="flex items-end space-x-2">
@@ -249,12 +353,9 @@ export default function ChatUI() {
             disabled={!input.trim() || isLoadingChat}
           >
             <Send className="h-4 w-4" />
-            <span className="sr-only">Send message</span>
+            <span className="sr-only">Send</span>
           </Button>
         </div>
-        <p className="text-xs text-muted-foreground mt-2">
-          Press Enter to send, Shift+Enter for new line
-        </p>
       </div>
     </div>
   );
